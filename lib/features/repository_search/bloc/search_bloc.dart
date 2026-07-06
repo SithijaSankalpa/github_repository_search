@@ -76,7 +76,10 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
         currentPage: nextPage,
         isLoadingMore: false,
       ));
-    } catch (e) {
+    } on UnauthorizedException {
+      emit(SearchUnauthorized());
+    }
+    catch (e) {
       emit(current.copyWith(isLoadingMore: false));
     }
   }
@@ -103,7 +106,10 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
           query: query,
         ));
       }
-    } catch (e) {
+    } on UnauthorizedException {
+      emit(SearchUnauthorized());
+    }
+    catch (e) {
       emit(SearchError(_messageFor(e)));
     }
   }
