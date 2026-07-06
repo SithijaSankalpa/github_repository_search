@@ -1,13 +1,14 @@
 import 'package:equatable/equatable.dart';
-import 'package:github_repository_search/features/repository_search/data/models/repository_model.dart';
+import '../data/models/repository_model.dart';
 
-sealed class SearchState extends Equatable{
+sealed class SearchState extends Equatable {
   const SearchState();
   @override
   List<Object?> get props => [];
 }
 
 class SearchInitial extends SearchState {}
+
 class SearchLoading extends SearchState {}
 
 class SearchLoaded extends SearchState {
@@ -17,20 +18,21 @@ class SearchLoaded extends SearchState {
   final String query;
   final bool isLoadingMore;
 
-  const SearchLoaded ({
+  const SearchLoaded({
     required this.results,
     required this.hasReachedMax,
     required this.currentPage,
     required this.query,
     this.isLoadingMore = false,
-});
+  });
+
   SearchLoaded copyWith({
-    List<RepositoryModel>?results,
-    bool?hasReachedMax,
+    List<RepositoryModel>? results,
+    bool? hasReachedMax,
     int? currentPage,
     String? query,
-    bool?isLoadingMore,
-}) {
+    bool? isLoadingMore,
+  }) {
     return SearchLoaded(
       results: results ?? this.results,
       hasReachedMax: hasReachedMax ?? this.hasReachedMax,
@@ -39,11 +41,12 @@ class SearchLoaded extends SearchState {
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
     );
   }
+
   @override
-  List<Object?> get props => [results,hasReachedMax,currentPage, query, isLoadingMore];
+  List<Object?> get props => [results, hasReachedMax, currentPage, query, isLoadingMore];
 }
 
-class SearchEmpty extends SearchState{}
+class SearchEmpty extends SearchState {}
 
 class SearchError extends SearchState {
   final String message;
@@ -51,3 +54,5 @@ class SearchError extends SearchState {
   @override
   List<Object?> get props => [message];
 }
+
+class SearchUnauthorized extends SearchState {}
