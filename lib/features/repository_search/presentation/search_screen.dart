@@ -6,6 +6,8 @@ import '../bloc/search_state.dart';
 import '../../repo_detail/presentation/repo_detail_screen.dart';
 import '../../token/bloc/token_cubit.dart';
 import '../../token/presentation/token_screen.dart';
+import '../../search_history/bloc/search_history_cubit.dart';
+import '../../search_history/bloc/search_history_state.dart';
 import '../../../core/theme/theme_cubit.dart';
 import 'widgets/repo_list_item.dart';
 
@@ -18,10 +20,14 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+
+  bool get _showHistory => _controller.text.isEmpty;
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -32,6 +38,16 @@ class _SearchScreenState extends State<SearchScreen> {
       MaterialPageRoute(builder: (_) => const TokenScreen()),
           (route) => false,
     );
+  }
+
+  void _runSearch(String query) {
+    _controller.text = query;
+    _controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: _controller.text.length),
+    );
+    context.read<SearchBloc>().add(SearchQueryChanged(query));
+    _focusNode.unfocus();
+    setState(() {});
   }
 
   @override
@@ -60,8 +76,11 @@ class _SearchScreenState extends State<SearchScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
               controller: _controller,
-              onChanged: (value) =>
-                  context.read<SearchBloc>().add(SearchQueryChanged(value)),
+              focusNode: _focusNode,
+              onChanged: (value) {
+                context.read<SearchBloc>().add(SearchQueryChanged(value));
+                setState(() {});
+              },
               decoration: InputDecoration(
                 hintText: 'Search GitHub repositories...',
                 prefixIcon: const Icon(Icons.search),
@@ -76,48 +95,121 @@ class _SearchScreenState extends State<SearchScreen> {
                 )
                     : null,
               ),
-              onTapOutside: (_) => FocusScope.of(context).unfocus(),
             ),
           ),
           Expanded(
-            child: BlocBuilder<SearchBloc, SearchState>(
-              builder: (context, state) {
-                return switch (state) {
-                  SearchInitial() => const _CenteredMessage(
-                    icon: Icons.explore_outlined,
-                    text: 'Search for a repository to get started',
-                  ),
-                  SearchLoading() => const Center(child: CircularProgressIndicator()),
-                  SearchEmpty() => const _CenteredMessage(
-                    icon: Icons.search_off,
-                    text: 'No results found',
-                  ),
-                  SearchUnauthorized() => _UnauthorizedView(
-                    onRetry: () => context
-                        .read<SearchBloc>()
-                        .add(SearchQueryChanged(_controller.text)),
-                    onReenterToken: () => _goToTokenScreen(context),
-                  ),
-                  SearchError(:final message) => _ErrorView(
-                    message: message,
-                    onRetry: () => context.read<SearchBloc>().add(SearchRefreshed()),
-                  ),
-                  SearchLoaded(
-                      :final results,
-                      :final hasReachedMax,
-                      :final isLoadingMore
-                  ) =>
-                      _ResultsList(
-                        results: results,
-                        hasReachedMax: hasReachedMax,
-                        isLoadingMore: isLoadingMore,
-                      ),
-                };
+            child: _showHistory
+                ? _SearchHistoryPanel(onSelect: _runSearch)
+                : BlocListener<SearchBloc, SearchState>(
+              listener: (context, state) {
+                if (state is SearchLoaded && state.currentPage == 1) {
+                  context.read<SearchHistoryCubit>().recordSearch(state.query);
+                }
               },
+              child: BlocBuilder<SearchBloc, SearchState>(
+                builder: (context, state) {
+                  return switch (state) {
+                    SearchInitial() => const _CenteredMessage(
+                      icon: Icons.explore_outlined,
+                      text: 'Search for a repository to get started',
+                    ),
+                    SearchLoading() =>
+                    const Center(child: CircularProgressIndicator()),
+                    SearchEmpty() => const _CenteredMessage(
+                      icon: Icons.search_off,
+                      text: 'No results found',
+                    ),
+                    SearchUnauthorized() => _UnauthorizedView(
+                      onRetry: () =>
+                          context.read<SearchBloc>().add(SearchRefreshed()),
+                      onReenterToken: () => _goToTokenScreen(context),
+                    ),
+                    SearchError(:final message) => _ErrorView(
+                      message: message,
+                      onRetry: () =>
+                          context.read<SearchBloc>().add(SearchRefreshed()),
+                    ),
+                    SearchLoaded(
+                        :final results,
+                        :final hasReachedMax,
+                        :final isLoadingMore
+                    ) =>
+                        _ResultsList(
+                          results: results,
+                          hasReachedMax: hasReachedMax,
+                          isLoadingMore: isLoadingMore,
+                        ),
+                  };
+                },
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SearchHistoryPanel extends StatelessWidget {
+  final ValueChanged<String> onSelect;
+  const _SearchHistoryPanel({required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<SearchHistoryCubit, SearchHistoryState>(
+      builder: (context, state) {
+        final entries = state is SearchHistoryLoaded ? state.entries : const [];
+
+        if (entries.isEmpty) {
+          return const _CenteredMessage(
+            icon: Icons.history,
+            text: 'No recent searches yet',
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Recent searches',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      context.read<SearchHistoryCubit>().clearAll();
+                    },
+                    child: const Text('Clear'),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: entries.length,
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  return ListTile(
+                    leading: const Icon(Icons.history, size: 20),
+                    title: Text(entry.query),
+                    onTap: () => onSelect(entry.query),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        context.read<SearchHistoryCubit>().deleteEntry(entry.query);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

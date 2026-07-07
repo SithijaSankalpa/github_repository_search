@@ -11,6 +11,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   static const Duration debounceDuration = Duration(milliseconds: 500);
 
   Timer? _debounceTimer;
+  String _lastQuery = ''; // remembered independently of current state, so retry always works
 
   SearchBloc(this.repository) : super(SearchInitial()) {
     on<SearchQueryChanged>(_onQueryChanged);
@@ -38,6 +39,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
     await completer.future;
     if (emit.isDone) return;
 
+    _lastQuery = query;
     emit(SearchLoading());
     await _performSearch(query: query, page: 1, emit: emit);
   }
@@ -46,10 +48,9 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       SearchRefreshed event,
       Emitter<SearchState> emit,
       ) async {
-    final current = state;
-    if (current is! SearchLoaded) return;
+    if (_lastQuery.isEmpty) return;
     emit(SearchLoading());
-    await _performSearch(query: current.query, page: 1, emit: emit);
+    await _performSearch(query: _lastQuery, page: 1, emit: emit);
   }
 
   Future<void> _onNextPageRequested(
@@ -78,14 +79,14 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       ));
     } on UnauthorizedException {
       emit(SearchUnauthorized());
-    }
-    catch (e) {
+    } catch (e) {
       emit(current.copyWith(isLoadingMore: false));
     }
   }
 
   void _onReset(SearchReset event, Emitter<SearchState> emit) {
     _debounceTimer?.cancel();
+    _lastQuery = '';
     emit(SearchInitial());
   }
 
@@ -108,8 +109,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
       }
     } on UnauthorizedException {
       emit(SearchUnauthorized());
-    }
-    catch (e) {
+    } catch (e) {
       emit(SearchError(_messageFor(e)));
     }
   }
