@@ -32,14 +32,20 @@ Required before the app is usable.
 The app requires a **GitHub Personal Access Token (classic)** to search repositories. Here's how to generate one:
 
 1 Go to **github.com** - log in
+
 2 Click your profile picture (top right) - **Settings**
+
 3 Scroll to the bottom of the left sidebar - **Developer settings**
+
 4 **Personal access tokens** - **Tokens (classic)**
+
 5 **Generate new token** - **Generate new token (classic)**
+
 6 Fill in:
     **Note**: any label, e.g. `flutter-repo-search`
     **Expiration**: any duration (30 days is fine)
     **Scopes**: **leave all checkboxes unchecked** - public repository search requires no scopes at all. An unscoped token still authenticates and raises the API rate limit from 10/min to ~30/min for search.
+    
 7 Click **Generate token** and **copy it immediately** - GitHub only shows it once
 
 Paste the token into the app's **token entry screen** on first launch. It is stored via `flutter_secure_storage` (Keychain on iOS, Keystore on Android) and reused automatically on subsequent app launches.
@@ -104,9 +110,9 @@ Grouping by **feature** (not by file type) was chosen because each feature is se
 ### 1. State management split: Cubit vs Bloc
 
 
-Token **Cubit** Only simple, direct actions exist (save / load / clear) - no branching event logic needed. A Cubit's method-call API is simpler and avoids unnecessary Event boilerplate. |
-Search **Bloc** Multiple distinct event types exist (query changed, next page requested, refreshed, reset) that each need different handling logic - the Event/State separation makes this explicit and testable. |
-Theme **Cubit** Single toggle action (light / dark) - no event complexity. |
+Token **Cubit** Only simple, direct actions exist (save / load / clear) - no branching event logic needed. A Cubit's method-call API is simpler and avoids unnecessary Event boilerplate. 
+Search **Bloc** Multiple distinct event types exist (query changed, next page requested, refreshed, reset) that each need different handling logic - the Event/State separation makes this explicit and testable. 
+Theme **Cubit** Single toggle action (light / dark) - no event complexity. 
 
 ### 2. Debounced search - **Manual `Timer` + `Completer` inside the Bloc**
 
@@ -158,7 +164,7 @@ Network/timeout  `NetworkException`  `SearchError`  Network error message + Retr
 
 ### 6. `envied` package - **Not used for the GitHub token**
 
-The task's tech-constraint table lists Envied for "storing API tokens," but the Token Setup requirements explicitly state the token is **user-entered at runtime** and must be **"never hardcoded and never committed."** These two requirements are inherently in tension: Envied is designed for **build-time secrets** compiled into the binary from a `.env` file — the opposite of a token a user types in live and that differs per user/install.
+The task's tech-constraint table lists Envied for "storing API tokens," but the Token Setup requirements explicitly state the token is **user-entered at runtime** and must be **"never hardcoded and never committed."** These two requirements are inherently in tension: Envied is designed for **build-time secrets** compiled into the binary from a `.env` file - the opposite of a token a user types in live and that differs per user/install.
 
 **Decision:** `envied` was not added as a dependency, and no `.env` file exists in this project. The token is handled exclusively via the runtime flow: user input - `flutter_secure_storage`. This was judged to better satisfy the explicit "never hardcoded" instruction, which takes precedence over the tooling suggestion.
 
@@ -170,7 +176,7 @@ Per §3 of the task, these were intentionally unspecified. Decisions and reasoni
 
 Search history persistence** - Not implemented  Descoped to prioritize the mandatory feature set within the time budget. Would add via a lightweight local store (`shared_preferences` or `sqflite`) keyed by recent unique queries, capped at ~10 entries. 
 Theming / dark mode - Implemented `ThemeCubit` (simple `Cubit<ThemeMode>`) toggles between `AppTheme.light` and `AppTheme.dark`, switchable via an app bar icon button. Chosen because it was a small, self-contained addition with clear UX value and low implementation risk. 
-Token entry: first-run gate vs settings screen**  **First-run gate** | A `SplashScreen` checks `TokenCubit`'s state on launch and routes to either the token screen (no token saved) or the search screen (token present) via `BlocListener`. This was chosen over a settings-screen approach because the app is unusable without a token - gating access up front avoids a confusing "half-working" app state before a token is supplied. Users can still clear/replace their token later via a logout icon in the search screen's app bar, which returns them to this same entry screen.
+Token entry: first-run gate vs settings screen**  **First-run gate**  A `SplashScreen` checks `TokenCubit`'s state on launch and routes to either the token screen (no token saved) or the search screen (token present) via `BlocListener`. This was chosen over a settings-screen approach because the app is unusable without a token - gating access up front avoids a confusing "half-working" app state before a token is supplied. Users can still clear/replace their token later via a logout icon in the search screen's app bar, which returns them to this same entry screen.
 **Page size for pagination**  **20 items per page**  A middle ground: large enough to minimize the number of paginated requests (respecting the Search API's ~30 req/min limit), small enough to keep each response fast and the list responsive on first load. 
 **Result caching**  Not implemented  Descoped due to time. Would add an in-memory `Map<String query+page, List<RepositoryModel>>` cache with a short TTL, checked before hitting the network - meaningfully reduces repeat calls when a user scrolls back up and down or re-runs a recent search. 
 **Debounce mechanism**  **Manual `Timer` + `Completer`** (see justification above)  Considered `bloc_concurrency`'s `restartable()` transformer as an alternative; manual approach chosen to keep the debounce logic self-contained and avoid an extra dependency for this scope.
