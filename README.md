@@ -105,7 +105,7 @@ lib/
 
 Grouping by **feature** (not by file type) was chosen because each feature is self-contained and can be understood, tested, or modified in isolation - a new contributor working on "search" never needs to touch `token/` files, and vice versa. This scales far better than a `blocs/`, `screens/`, `repositories/` top-level split as the app grows.
 
-## Key Decisions & Justifications
+# Key Decisions & Justifications
 
 ### 1. State management split: Cubit vs Bloc
 
@@ -182,15 +182,97 @@ Token entry: first-run gate vs settings screen**  **First-run gate**  A `SplashS
 **Debounce mechanism**  **Manual `Timer` + `Completer`** (see justification above)  Considered `bloc_concurrency`'s `restartable()` transformer as an alternative; manual approach chosen to keep the debounce logic self-contained and avoid an extra dependency for this scope.
 **Error taxonomy** Implemented Distinct typed exceptions and distinct user-facing messages exist for 401 (invalid token), 403/429 (rate limit), network failure, and invalid query - detailed in the [Error Handling]
 
+
+## Search History (SQLite)
+
+### What is stored
+
+Each time a search **successfully returns results** (first page only, not on pagination "load more"), the following is recorded locally:
+
+`query` The search text, trimmed. Enforced **unique** at the database level. 
+`searched_at` Unix timestamp (ms) of when the search was run. 
+
+**Not stored:** the actual repository results, any account/user identity, or anything beyond the query text and a timestamp. This is a lightweight, device-local convenience feature - not a cache or account-linked history.
+
+### Why SQLite (`sqflite`) instead of `SharedPreferences`
+
+Search history is a **growing, orderable, queryable list** - it needs sorting by recency, capping at a maximum count, and per-item deletion. `SharedPreferences` is a simple key-value store, well suited to flags or single values, but awkward for list operations like "give me the 20 most recent, newest first" or "delete this one entry." SQLite (via `sqflite`) is purpose-built for exactly this kind of structured, queryable local data.
+
+### Key decisions
+
+- **Deduplication:** the `query` column has a `UNIQUE` constraint. Re-searching an existing query uses `ConflictAlgorithm.replace` on insert, which updates its `searched_at` timestamp rather than creating a duplicate row - so a re-searched query simply "bumps" to the top of the recency-ordered list instead of appearing twice.
+- **Cap:** capped at the **20 most recent** entries. After every insert, the repository checks the total row count and deletes the oldest excess rows beyond the cap, keeping the table small and the history list focused on genuinely recent activity.
+- **When a search gets recorded:** only on `SearchLoaded` states where `currentPage == 1` - i.e., a genuine fresh search that returned results. Pagination ("load more") does *not* re-trigger a history write for the same query, and failed/empty searches are not recorded at all.
+- **Where it's recorded:** via a `BlocListener<SearchBloc, SearchState>` inside `SearchScreen`, which calls `SearchHistoryCubit.recordSearch()`. This keeps `SearchBloc` fully decoupled from history - it has no knowledge that history exists at all, which keeps its responsibility scoped purely to search behavior.
+
+- **State management:** a `Cubit` (`SearchHistoryCubit`), not a full `Bloc` - consistent with the reasoning used for `TokenCubit`: the only operations are direct actions (record / load / delete / clear), with no competing event types that need Bloc's Event-State branching.
+- **Persistence across logout:** search history is **not cleared** when a user logs out / clears their GitHub token, since history is tied to the device rather than to any notion of an "account" (GitHub PATs aren't personal accounts in this app's context). This is a deliberate choice, documented here rather than left as an unstated assumption.
+- **UI placement:** shown as an in-place panel below the search bar whenever the search field is empty, rather than a separate screen - chosen since it's a small, frequently-glanced-at list, and a dedicated screen would add an unnecessary navigation hop for a lightweight feature.
+
+### Known limitations
+
+- No "recently used" grouping by date (e.g. "Today," "Earlier this week") - flat list ordered strictly by recency.
+- No search/filter within the history list itself - acceptable given the small cap of 20 entries.
+
+## How to Inspect the SQLite Database Directly
+
+Useful for verifying persistence actually works (not just trusting the UI), or for debugging if history behaves unexpectedly.
+
+### Option 1 - Android Studio's built-in Database Inspector (easiest)
+
+1. Run the app on an emulator or a debug-enabled physical device (`flutter run`, debug mode - not release/profile)
+2. In Android Studio: **View - Tool Windows - App Inspection**
+3. Select the **Database Inspector** tab
+4. Choose your running app process from the dropdown
+5. You should see your database file (`github_search.db`) listed on the left, with the `search_history` table underneath
+6. Click the table to see all rows live - you can even run custom SQL queries in the inspector's query box, e.g.:
+   ```sql
+   SELECT * FROM search_history ORDER BY searched_at DESC;
+=7 This updates in near real-time as the app runs, so you can search something in the app and watch the row appear in the inspector without restarting anything
+
+### Option 2 - Pull the `.db` file off the device manually (Android)
+
+# Find your app's package name in android/app/build.gradle (applicationId)
+adb shell run-as <your.package.name> ls /data/data/<your.package.name>/databases/
+
+# Copy the db file to your computer
+adb exec-out run-as <your.package.name> cat /data/data/<your.package.name>/databases/github_search.db > github_search.db
+
+
+Then open `github_search.db` with any SQLite browser tool (e.g. **DB Browser for SQLite** - free, cross-platform: https://sqlitebrowser.org) to inspect tables and rows visually, or run SQL directly against it.
+
+**Note:** `adb shell run-as` requires either a debug build or a rooted device - this won't work against a release build on a non-rooted device, which is expected/correct behavior (app-private storage shouldn't be trivially accessible in production).
+
+### Option 3 - Print rows to console (quick, no extra tools)
+
+Temporarily add this anywhere convenient (e.g. right after the app launches, or behind a debug button) to dump the table straight to your IDE's console:
+
+dart
+final db = await DatabaseHelper.instance.database;
+final rows = await db.query('search_history', orderBy: 'searched_at DESC');
+for (final row in rows) {
+  print(row);
+}
+
+
+### Verifying persistence specifically
+
+The real test that SQLite (not just in-memory Bloc state) is doing its job:
+
+1 Search a few different queries
+2 **Fully stop** the app (not hot reload/hot restart - actually stop and relaunch via `flutter run`)
+3 Focus the empty search field again
+4 Your history should still be there - this confirms the data survived a full process restart, which in-memory state alone never would.
+
+
 ## Known Limitations & Future Improvements
 
 Honest account of what's incomplete or simplified, and what I'd prioritize with more time:
 
-- **Load-more (pagination) failures are currently silent** - if a next-page request fails mid-scroll, the loading spinner simply stops rather than surfacing an error. Existing results remain visible (a deliberate choice to avoid disrupting an otherwise-successful session), but a toast/snackbar with a retry option would be a clear next improvement.
-- **No automated tests** - given the time budget, manual testing was prioritized over test coverage. With more time, I would start with unit tests for `SearchBloc`'s state transitions (the most logic-dense piece), using `bloc_test` and a mocked repository.
-- **No result caching** - every search re-hits the network, even for a query run seconds earlier.
-- **No search history** - queries are not persisted between sessions.
-- **Repository detail data can be marginally stale** since it reuses list data rather than re-fetching (see justification above) - acceptable for this use case but worth flagging.
+**Load-more (pagination) failures are currently silent** - if a next-page request fails mid-scroll, the loading spinner simply stops rather than surfacing an error. Existing results remain visible (a deliberate choice to avoid disrupting an otherwise-successful session), but a toast/snackbar with a retry option would be a clear next improvement.
+**No automated tests** - given the time budget, manual testing was prioritized over test coverage. With more time, I would start with unit tests for `SearchBloc`'s state transitions (the most logic-dense piece), using `bloc_test` and a mocked repository.
+**No result caching** - every search re-hits the network, even for a query run seconds earlier.
+**Repository detail data can be marginally stale** since it reuses list data rather than re-fetching (see justification above) - acceptable for this use case but worth flagging.
 
 
 ## Git Workflow
@@ -209,7 +291,7 @@ Development followed a `main` - `develop` - `feature/*` branching model, with in
 | Debounced search | ✅ (manual Timer, justified above) |
 | Paginated infinite scroll | ✅ (20/page, scroll-position triggered) |
 | Detail screen (stars/forks/issues/watchers/language/description/owner) | ✅ (reuses list data, justified above) |
-| Four UI states (loading/data/empty/error) — no silent failures | ✅ (plus a fifth dedicated `SearchUnauthorized` state for 401) |
+| Four UI states (loading/data/empty/error) - no silent failures | ✅ (plus a fifth dedicated `SearchUnauthorized` state for 401) |
 | Pull-to-refresh | ✅ |
 | README with rationale | ✅ (this document) |
 | Incremental git history | ✅ |
